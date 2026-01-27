@@ -1,0 +1,157 @@
+#cloud-config
+
+# Alias/Taboo Game Server - Cloud-Init Setup
+# Ubuntu 24.04 | 1GB RAM | Docker
+
+users:
+  - name: aliby
+    groups: sudo, docker
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3... # ЗАМЕНИ НА СВОЙ SSH КЛЮЧ (если есть)
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - git
+  - ufw
+
+runcmd:
+  # Update system
+  - apt-get update
+  - apt-get upgrade -y
+
+  # Install Docker
+  - curl -fsSL https://get.docker.com -o get-docker.sh
+  - sh get-docker.sh
+  - usermod -aG docker aliby
+  - systemctl enable docker
+  - systemctl start docker
+
+  # Install Docker Compose V2
+  - mkdir -p /usr/local/lib/docker/cli-plugins
+  - curl -SL https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+  - chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+  # Setup firewall
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp    # SSH
+  - ufw allow 80/tcp    # HTTP
+  - ufw allow 443/tcp   # HTTPS (for future SSL)
+  - ufw allow 8888/tcp  # Game port
+  - ufw --force enable
+
+  # Create app directory
+  - mkdir -p /opt/aliby
+  - chown aliby:aliby /opt/aliby
+
+  # Setup swap (important for 1GB RAM!)
+  - fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+  # Clone repository (UNCOMMENT and replace with your repo)
+  # - cd /opt/aliby
+  # - git clone https://github.com/YOUR_USERNAME/aliby.git .
+  # - chown -R aliby:aliby /opt/aliby
+
+  # Start application (UNCOMMENT after git clone)
+  # - cd /opt/aliby
+  # - docker compose up -d
+
+write_files:
+  - path: /etc/motd
+    content: |
+      
+      ================================================
+      🎮 Alias/Taboo Game Server
+      ================================================
+      
+      Quick commands:
+        cd /opt/aliby                 # Go to app directory
+        docker compose ps             # Check status
+        docker compose logs -f        # View logs
+        docker compose restart        # Restart app
+        docker compose down           # Stop app
+        docker compose up -d          # Start app
+      
+      Endpoints:
+        Game: http://YOUR_IP:8888
+        Backend API: http://YOUR_IP:8888/api
+      
+      ================================================
+      
+
+  - path: /opt/aliby/README_DEPLOY.md
+    content: |
+      # Deployment Instructions
+      
+      ## Initial Setup
+      
+      1. SSH into server:
+         ```bash
+         ssh aliby@YOUR_IP
+         ```
+      
+      2. Clone your repository:
+         ```bash
+         cd /opt/aliby
+         git clone https://github.com/YOUR_USERNAME/aliby.git .
+         ```
+      
+      3. Start the application:
+         ```bash
+         docker compose up -d
+         ```
+      
+      4. Check logs:
+         ```bash
+         docker compose logs -f
+         ```
+      
+      ## Updates
+      
+      ```bash
+      cd /opt/aliby
+      git pull
+      docker compose down
+      docker compose build
+      docker compose up -d
+      ```
+      
+      ## Monitoring
+      
+      ```bash
+      # Check running containers
+      docker compose ps
+      
+      # View logs
+      docker compose logs -f backend
+      docker compose logs -f frontend
+      
+      # Check resource usage
+      docker stats
+      
+      # Check disk space
+      df -h
+      ```
+
+final_message: |
+  ================================================
+  🎉 Alias/Taboo Server Setup Complete!
+  ================================================
+  
+  Next steps:
+    1. SSH: ssh aliby@YOUR_IP
+    2. Clone repo: cd /opt/aliby && git clone YOUR_REPO
+    3. Start app: docker compose up -d
+  
+  Your game will be at: http://YOUR_IP:8888
+  ================================================

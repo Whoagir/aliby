@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: aliby
+      POSTGRES_PASSWORD: aliby_password
+      POSTGRES_DB: aliby_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aliby"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8050:8000"
+    environment:
+      - DATABASE_URL=postgresql://aliby:aliby_password@postgres:5432/aliby_db
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=your-secret-key-change-in-production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3050:80"
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8888:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  postgres_data:
