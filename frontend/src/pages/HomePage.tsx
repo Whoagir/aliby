@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 // Determine API URL based on environment
@@ -27,6 +27,31 @@ const HomePage: React.FC = () => {
   const [selectedMode, setSelectedMode] = useState<'alias' | 'taboo'>('alias');
   const [showAdvanced, setShowAdvanced] = useState(false);
   
+  // Auth state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authUsername, setAuthUsername] = useState('');
+
+  useEffect(() => {
+    // Check if user is authenticated
+    const token = localStorage.getItem('auth_token');
+    const user = localStorage.getItem('user');
+    if (token && user) {
+      const userData = JSON.parse(user);
+      setIsAuthenticated(true);
+      setAuthUsername(userData.username);
+      // Set username from auth if authenticated
+      if (!username) {
+        setUsername(userData.username);
+      }
+    } else {
+      // Load username from localStorage if not authenticated
+      const savedUsername = localStorage.getItem('username');
+      if (savedUsername && !username) {
+        setUsername(savedUsername);
+      }
+    }
+  }, []);
+  
   // Game settings
   const [timedMode, setTimedMode] = useState(true);
   const [roundTime, setRoundTime] = useState(60);
@@ -35,12 +60,14 @@ const HomePage: React.FC = () => {
   const [scoreToWin, setScoreToWin] = useState(30);
   const [teamCount, setTeamCount] = useState(2);
   const [showTranslations, setShowTranslations] = useState(true);
+  const [soloDevice, setSoloDevice] = useState(false);
   
   // Advanced settings
   const [customRoundTime, setCustomRoundTime] = useState(60);
   const [customScoreToWin, setCustomScoreToWin] = useState(30);
   const [enableMaxTranslations, setEnableMaxTranslations] = useState(false);
   const [maxTranslations, setMaxTranslations] = useState(10);
+  const [roomPassword, setRoomPassword] = useState('');
   
   const navigate = useNavigate();
 
@@ -72,7 +99,9 @@ const HomePage: React.FC = () => {
         score_to_win: (showAdvanced ? customScoreToWin : scoreToWin).toString(),
         team_count: teamCount.toString(),
         host_id: userId,
-        show_translations: showTranslations.toString()
+        show_translations: showTranslations.toString(),
+        solo_device: soloDevice.toString(),
+        room_password: roomPassword
       });
       
       const fullUrl = `${API_URL}/rooms/create?${params}`;
@@ -98,9 +127,9 @@ const HomePage: React.FC = () => {
       console.log('Room created:', data);
       
       localStorage.setItem('username', username);
-      // DON'T create new user_id - we already have it!
-      // localStorage.setItem('user_id', userId); // Already saved above
-      navigate(`/room/${data.room_code}`);
+      
+      // Use encrypted link
+      navigate(`/room/${data.encrypted_link}`);
     } catch (error) {
       console.error('Failed to create room:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -146,8 +175,51 @@ const HomePage: React.FC = () => {
     }
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
+    setIsAuthenticated(false);
+    setAuthUsername('');
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
+      {/* Auth buttons in top-right corner */}
+      <div className="fixed top-4 right-4 z-10">
+        {isAuthenticated ? (
+          <div className="flex items-center gap-3">
+            <span className="text-white font-medium">Hello, {authUsername}!</span>
+            <button
+              onClick={() => navigate('/history')}
+              className="bg-white text-blue-600 px-4 py-2 rounded-lg font-medium hover:bg-gray-100 transition"
+            >
+              My Games
+            </button>
+            <button
+              onClick={handleLogout}
+              className="bg-red-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-red-700 transition"
+            >
+              Logout
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-3">
+            <button
+              onClick={() => navigate('/login')}
+              className="bg-white text-blue-600 px-4 py-2 rounded-lg font-medium hover:bg-gray-100 transition"
+            >
+              Login
+            </button>
+            <button
+              onClick={() => navigate('/register')}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition"
+            >
+              Register
+            </button>
+          </div>
+        )}
+      </div>
+
       <div className="max-w-md w-full">
         <div className="text-center mb-8">
           <h1 className="text-5xl font-bold text-white mb-2">
@@ -208,7 +280,12 @@ const HomePage: React.FC = () => {
                 <div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => setShowAdvanced(false)}
+                      onClick={() => {
+                        setShowAdvanced(false);
+                        // Copy advanced settings back to basic when switching
+                        setRoundTime(customRoundTime);
+                        setScoreToWin(customScoreToWin);
+                      }}
                       className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
                         !showAdvanced
                           ? 'bg-blue-600 text-white'
@@ -218,7 +295,12 @@ const HomePage: React.FC = () => {
                       Basic
                     </button>
                     <button
-                      onClick={() => setShowAdvanced(true)}
+                      onClick={() => {
+                        setShowAdvanced(true);
+                        // Copy current basic settings to advanced when switching
+                        setCustomRoundTime(roundTime);
+                        setCustomScoreToWin(scoreToWin);
+                      }}
                       className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
                         showAdvanced
                           ? 'bg-red-600 text-white'
@@ -302,6 +384,35 @@ const HomePage: React.FC = () => {
                   </>
                 ) : (
                   <>
+                {/* Device Mode */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Device Mode
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setSoloDevice(false)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
+                        !soloDevice
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Multi Device
+                    </button>
+                    <button
+                      onClick={() => setSoloDevice(true)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
+                        soloDevice
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Solo Device
+                    </button>
+                  </div>
+                </div>
+
                 {/* Timer Mode */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -331,8 +442,8 @@ const HomePage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Round Time */}
-                {timedMode && (
+                {/* Round Time - only show in Basic mode */}
+                {timedMode && !showAdvanced && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Round Time
@@ -419,27 +530,29 @@ const HomePage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Score to Win */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Score to Win
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[30, 50, 100].map((score) => (
-                      <button
-                        key={score}
-                        onClick={() => setScoreToWin(score)}
-                        className={`py-2 px-4 rounded-lg font-medium transition ${
-                          scoreToWin === score
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                        }`}
-                      >
-                        {score} pts
-                      </button>
-                    ))}
+                {/* Score to Win - only show in Basic mode */}
+                {!showAdvanced && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Score to Win
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[30, 50, 100].map((score) => (
+                        <button
+                          key={score}
+                          onClick={() => setScoreToWin(score)}
+                          className={`py-2 px-4 rounded-lg font-medium transition ${
+                            scoreToWin === score
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                          }`}
+                        >
+                          {score} pts
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Number of Teams */}
                 <div>

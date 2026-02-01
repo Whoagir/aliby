@@ -2,6 +2,19 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import useGameWebSocket from '../hooks/useGameWebSocket';
 
+// Determine API URL based on environment
+const getApiUrl = () => {
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  if (window.location.port === '3050') {
+    return 'http://localhost:8050';
+  }
+  return `${window.location.protocol}//${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}`;
+};
+
+const API_URL = getApiUrl();
+
 interface Player {
   user_id: string;
   username: string;
@@ -15,13 +28,58 @@ interface Team {
 }
 
 const RoomPage: React.FC = () => {
-  const { code } = useParams<{ code: string }>();
+  const { encryptedLink } = useParams<{ encryptedLink: string }>();
   const navigate = useNavigate();
   const username = localStorage.getItem('username') || 'Anonymous';
   const userId = localStorage.getItem('user_id') || Date.now().toString();
   
-  const { gameState, sendMessage, isConnected } = useGameWebSocket(code || '');
+  const [roomCode, setRoomCode] = useState<string>('');
+  const [hasPassword, setHasPassword] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [password, setPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [decrypting, setDecrypting] = useState(true);
+  
+  const { gameState, sendMessage, isConnected } = useGameWebSocket(roomCode);
   const [selectedTeam, setSelectedTeam] = useState<number | null>(null);
+
+  // Decrypt room link on mount
+  useEffect(() => {
+    const decryptLink = async () => {
+      if (!encryptedLink) {
+        navigate('/');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_URL}/room-access/decrypt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ encrypted_link: encryptedLink })
+        });
+
+        if (!response.ok) {
+          throw new Error('Invalid room link');
+        }
+
+        const data = await response.json();
+        setRoomCode(data.room_code);
+        setHasPassword(data.has_password);
+        
+        if (data.has_password) {
+          setShowPasswordModal(true);
+        }
+        
+        setDecrypting(false);
+      } catch (err) {
+        console.error('Failed to decrypt link:', err);
+        alert('Invalid or expired room link');
+        navigate('/');
+      }
+    };
+
+    decryptLink();
+  }, [encryptedLink, navigate]);
 
   const joinTeam = (teamId: number) => {
     sendMessage({
@@ -37,13 +95,90 @@ const RoomPage: React.FC = () => {
     sendMessage({ type: 'start_game' });
   };
 
+  const verifyPassword = async () => {
+    setPasswordError('');
+    
+    try {
+      const response = await fetch(`${API_URL}/room-access/verify-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          room_code: roomCode,
+          password: password 
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Incorrect password');
+      }
+
+      setShowPasswordModal(false);
+    } catch (err: any) {
+      setPasswordError(err.message || 'Incorrect password');
+    }
+  };
+
   useEffect(() => {
     if (gameState?.status === 'playing') {
-      navigate(`/room/${code}/play`);
+      navigate(`/room/${encryptedLink}/play`);
     }
-  }, [gameState?.status, code, navigate]);
+  }, [gameState?.status, encryptedLink, navigate]);
 
-  if (!isConnected || !gameState) {
+  if (decrypting) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-white text-xl">Loading room...</div>
+      </div>
+    );
+  }
+
+  if (showPasswordModal) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
+          <h2 className="text-3xl font-bold text-gray-800 mb-4">Private Room</h2>
+          <p className="text-gray-600 mb-6">This room is password protected</p>
+          
+          {passwordError && (
+            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+              {passwordError}
+            </div>
+          )}
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && verifyPassword()}
+              placeholder="Enter room password"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={verifyPassword}
+              className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 font-medium"
+            >
+              Join
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-400 font-medium"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isConnected || !gameState || !roomCode) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-white text-xl">Connecting to game...</div>
@@ -60,7 +195,7 @@ const RoomPage: React.FC = () => {
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">
-            Room: {code}
+            Room: {roomCode}
           </h1>
           <p className="text-blue-200 text-lg capitalize">
             Mode: {mode}

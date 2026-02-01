@@ -1,12 +1,29 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import useGameWebSocket from '../hooks/useGameWebSocket';
 import { soundPlayer } from '../utils/sounds';
 import Confetti from 'react-confetti';
 
+// Determine API URL based on environment
+const getApiUrl = () => {
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  if (window.location.port === '3050') {
+    return 'http://localhost:8050';
+  }
+  return `${window.location.protocol}//${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}`;
+};
+
+const API_URL = getApiUrl();
+
 const GamePage: React.FC = () => {
-  const { code } = useParams<{ code: string }>();
+  const { encryptedLink } = useParams<{ encryptedLink: string }>();
   const navigate = useNavigate();
+  
+  const [roomCode, setRoomCode] = useState<string>('');
+  const [decrypting, setDecrypting] = useState(true);
+  
   const { 
     gameState, 
     currentWord, 
@@ -20,10 +37,41 @@ const GamePage: React.FC = () => {
     teamSelection,
     gameWinner,
     sendMessage 
-  } = useGameWebSocket(code || '');
+  } = useGameWebSocket(roomCode);
 
-  const [showTranslation, setShowTranslation] = React.useState(false);
-  const [translationWasUsed, setTranslationWasUsed] = React.useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [translationWasUsed, setTranslationWasUsed] = useState(false);
+
+  // Decrypt room link on mount
+  useEffect(() => {
+    const decryptLink = async () => {
+      if (!encryptedLink) {
+        navigate('/');
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_URL}/room-access/decrypt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ encrypted_link: encryptedLink })
+        });
+
+        if (!response.ok) {
+          navigate('/');
+          return;
+        }
+
+        const data = await response.json();
+        setRoomCode(data.room_code);
+        setDecrypting(false);
+      } catch (err) {
+        navigate('/');
+      }
+    };
+
+    decryptLink();
+  }, [encryptedLink, navigate]);
 
   const handleGuessed = () => {
     if (timeLeft > 0 || timeLeft === -1 || timerEnded) {
@@ -50,6 +98,11 @@ const GamePage: React.FC = () => {
 
   const handleTeamSelected = (teamId: number) => {
     sendMessage({ type: 'team_selected', team_id: teamId });
+  };
+
+  const handleEndRound = () => {
+    // For unlimited mode - manually end the round
+    sendMessage({ type: 'end_round' });
   };
 
   const handleTaboo = () => {
@@ -120,12 +173,20 @@ const GamePage: React.FC = () => {
     }
   }, [timeLeft, isPaused]);
 
+  if (decrypting || !roomCode) {
+    return <div className="min-h-screen flex items-center justify-center text-white">Loading room...</div>;
+  }
+
+  if (!gameState) {
+    return <div className="min-h-screen flex items-center justify-center text-white">Connecting to game...</div>;
+  }
+
   return (
     <div className="min-h-screen p-8">
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="text-center mb-6">
-          <h1 className="text-3xl font-bold text-white mb-2">Room: {code}</h1>
+          <h1 className="text-3xl font-bold text-white mb-2">Room: {roomCode}</h1>
           <div className="flex justify-center items-center gap-8">
             {gameState?.status === 'playing' && (
               <div className="text-white text-lg font-semibold">
@@ -179,7 +240,7 @@ const GamePage: React.FC = () => {
           <div className="text-center">
             {needsStartButton ? (
               <div className="py-8">
-                {isMyTeamPlaying ? (
+                {(isMyTeamPlaying || gameState?.settings?.solo_device) ? (
                   <button
                     onClick={handleStartRound}
                     className="bg-green-600 hover:bg-green-700 text-white font-bold py-6 px-12 rounded-lg text-3xl transition duration-200 shadow-lg"
@@ -194,7 +255,7 @@ const GamePage: React.FC = () => {
               </div>
             ) : isRoundStarted ? (
               <>
-                {isMyTeamPlaying ? (
+                {(isMyTeamPlaying || gameState?.settings?.solo_device) ? (
                   <>
                     <div className={`text-6xl font-bold mb-4 ${
                       isPaused ? 'text-orange-500' : showTranslation ? 'text-blue-600' : 'text-gray-800'
@@ -262,7 +323,7 @@ const GamePage: React.FC = () => {
         <div className="flex justify-center gap-4 flex-wrap">
           {isRoundStarted && (timeLeft > 0 || timeLeft === -1 || timerEnded) ? (
             <>
-              {isMyTeamPlaying && (
+              {(isMyTeamPlaying || gameState?.settings?.solo_device) && (
                 <>
                   <button
                     onClick={handleGuessed}
@@ -301,6 +362,20 @@ const GamePage: React.FC = () => {
                       Taboo Violation
                     </button>
                   )}
+
+                  {isUnlimitedTime && (
+                    <button
+                      onClick={handleEndRound}
+                      disabled={isPaused}
+                      className={`font-bold py-4 px-8 rounded-lg text-xl transition duration-200 ${
+                        isPaused 
+                          ? 'bg-gray-400 cursor-not-allowed text-white'
+                          : 'bg-purple-600 hover:bg-purple-700 text-white'
+                      }`}
+                    >
+                      End Round
+                    </button>
+                  )}
                 </>
               )}
 
@@ -321,7 +396,7 @@ const GamePage: React.FC = () => {
         </div>
 
         {/* Team Selection Modal - for last word after timer ended */}
-        {teamSelection && isMyTeamPlaying && (
+        {teamSelection && (isMyTeamPlaying || gameState?.settings?.solo_device) && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-lg shadow-2xl max-w-md w-full">
               <div className="p-6 border-b">
@@ -348,8 +423,8 @@ const GamePage: React.FC = () => {
           </div>
         )}
 
-        {/* Round Summary Modal - ТОЛЬКО для играющей команды */}
-        {roundSummary !== null && isMyTeamPlaying && (
+        {/* Round Summary Modal - для играющей команды или solo device */}
+        {roundSummary !== null && (isMyTeamPlaying || gameState?.settings?.solo_device) && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-lg shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
               <div className="p-6 border-b">

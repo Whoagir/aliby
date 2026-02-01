@@ -64,7 +64,9 @@ async def create_room(
     language: str = "en",
     score_to_win: int = 30,
     team_count: int = 2,
-    show_translations: bool = True
+    show_translations: bool = True,
+    solo_device: bool = False,
+    room_password: str = ""
 ):
     """Create new game room with custom settings"""
     room_code = generate_room_code()
@@ -82,7 +84,9 @@ async def create_room(
         word_pack="general",
         score_to_win=score_to_win,
         team_count=team_count,
-        show_translations=show_translations
+        show_translations=show_translations,
+        solo_device=solo_device,
+        room_password=room_password
     )
     
     # Generate teams dynamically based on team_count
@@ -104,8 +108,13 @@ async def create_room(
     
     active_rooms[room_code] = room
     
+    # Generate encrypted link
+    from ..room_crypto import encrypt_room_link
+    encrypted_link = encrypt_room_link(room_code)
+    
     return {
         "room_code": room_code,
+        "encrypted_link": encrypted_link,
         "mode": mode.value if hasattr(mode, 'value') else mode,
         "status": GameStatus.LOBBY.value,
         "settings": settings.dict()

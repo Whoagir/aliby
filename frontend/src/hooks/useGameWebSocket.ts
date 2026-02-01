@@ -60,6 +60,8 @@ const useGameWebSocket = (roomCode: string) => {
   const [teamSelection, setTeamSelection] = useState<{ teams: { id: number; name: string }[]; last_word: string } | null>(null);
   const [gameWinner, setGameWinner] = useState<{ winner: string; scores: Record<string, number> } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const gameStateRef = useRef<GameState | null>(null);
+  const guessedWordsRef = useRef<GuessedWord[]>([]);
 
   useEffect(() => {
     if (!roomCode) return;
@@ -78,6 +80,7 @@ const useGameWebSocket = (roomCode: string) => {
       switch (message.type) {
         case 'game_state':
           setGameState(message.data);
+          gameStateRef.current = message.data; // Keep ref in sync
           setIsPaused(message.data.is_paused || false);
           break;
         case 'new_word':
@@ -103,6 +106,13 @@ const useGameWebSocket = (roomCode: string) => {
           // Show round summary modal
           setRoundSummary(message.guessed_words || []);
           setTeamSelection(null); // Close team selection if open
+          // Collect guessed words for history
+          if (message.guessed_words && Array.isArray(message.guessed_words)) {
+            guessedWordsRef.current = [
+              ...guessedWordsRef.current,
+              ...message.guessed_words
+            ];
+          }
           break;
         case 'game_paused':
           setIsPaused(true);
@@ -119,7 +129,8 @@ const useGameWebSocket = (roomCode: string) => {
           setCurrentWord('');
           setCurrentTabooWords([]);
           setCurrentTranslation('');
-          setTimeLeft(0);
+          // Keep unlimited time (-1) if it was unlimited, otherwise reset to 0
+          setTimeLeft(prev => prev === -1 ? -1 : 0);
           setRoundSummary(null); // ВАЖНО: очистить модальное окно для всех!
           setTimerEnded(false);
           setTeamSelection(null);
@@ -127,7 +138,8 @@ const useGameWebSocket = (roomCode: string) => {
         case 'timer_ended':
           // Timer reached 0 - mark it but keep word visible
           setTimerEnded(true);
-          setTimeLeft(0);
+          // Don't change timeLeft if it's unlimited mode (-1)
+          setTimeLeft(prev => prev === -1 ? -1 : 0);
           break;
         case 'select_team':
           // Show team selection modal for last word
@@ -140,11 +152,79 @@ const useGameWebSocket = (roomCode: string) => {
           // Handle round end
           break;
         case 'game_end':
+          console.log('[GAME_END] Received game_end message:', message);
+          
           // Show winner screen with scores
           setGameWinner({
             winner: message.winner,
             scores: message.scores || {}
           });
+          
+          // Save game history if user is authenticated
+          const saveGameHistory = async () => {
+            const token = localStorage.getItem('auth_token');
+            const currentGameState = gameStateRef.current; // Use ref!
+            const allGuessedWords = guessedWordsRef.current;
+            
+            console.log('[SAVE_HISTORY] Token:', token ? 'exists' : 'missing');
+            console.log('[SAVE_HISTORY] gameState from ref:', currentGameState ? 'exists' : 'null');
+            console.log('[SAVE_HISTORY] guessed words count:', allGuessedWords.length);
+            
+            if (!token) {
+              console.log('[SAVE_HISTORY] Skipping: no auth token');
+              return;
+            }
+            
+            if (!currentGameState) {
+              console.log('[SAVE_HISTORY] Skipping: gameState is null');
+              return;
+            }
+            
+            try {
+              const API_URL = window.location.port === '3050' 
+                ? 'http://localhost:8050' 
+                : `${window.location.protocol}//${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}`;
+              
+              console.log('[SAVE_HISTORY] Sending to:', `${API_URL}/history/save-game`);
+              console.log('[SAVE_HISTORY] Data:', {
+                room_code: roomCode,
+                winner: message.winner,
+                final_scores: message.scores || {},
+                teams: currentGameState.teams || [],
+                guessed_words: allGuessedWords
+              });
+              
+              const response = await fetch(`${API_URL}/history/save-game`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  room_code: roomCode,
+                  winner: message.winner,
+                  final_scores: message.scores || {},
+                  teams: currentGameState.teams || [],
+                  guessed_words: allGuessedWords
+                })
+              });
+              
+              console.log('[SAVE_HISTORY] Response status:', response.status);
+              
+              if (!response.ok) {
+                const text = await response.text();
+                console.error('[SAVE_HISTORY] Error response:', text);
+              } else {
+                const result = await response.json();
+                console.log('[SAVE_HISTORY] Success!', result);
+              }
+            } catch (err) {
+              console.error('[SAVE_HISTORY] Failed to save game history:', err);
+            }
+          };
+          
+          console.log('[GAME_END] Calling saveGameHistory...');
+          saveGameHistory();
           break;
         case 'error':
           console.error('Game error:', message.message);

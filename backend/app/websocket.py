@@ -200,19 +200,22 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 if room.status == GameStatus.PLAYING:
                     user_id = data.get("user_id")
                     
-                    # ВАЖНО: Проверяем что игрок находится в ТЕКУЩЕЙ команде
+                    # Get current team
                     current_team = room.teams[room.current_team_index]
-                    player_in_current_team = any(
-                        p.user_id == user_id for p in current_team.players
-                    )
                     
-                    if not player_in_current_team:
-                        print(f"[start_round] ERROR: Player {user_id} не в текущей команде {current_team.name}!")
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": f"Only {current_team.name} can start the round!"
-                        })
-                        continue
+                    # ВАЖНО: Проверяем что игрок находится в ТЕКУЩЕЙ команде (кроме solo_device режима)
+                    if not room.settings.solo_device:
+                        player_in_current_team = any(
+                            p.user_id == user_id for p in current_team.players
+                        )
+                        
+                        if not player_in_current_team:
+                            print(f"[start_round] ERROR: Player {user_id} не в текущей команде {current_team.name}!")
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"Only {current_team.name} can start the round!"
+                            })
+                            continue
                     
                     print(f"[start_round] Player {user_id} from {current_team.name} starting round")
                     
@@ -334,6 +337,16 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                             "taboo": word.taboo_words,
                             "translation": word.translation if room.settings.show_translations else ""
                         })
+            
+            elif message_type == "end_round":
+                # For unlimited mode - manually end the round
+                # Mark timer as ended (same as when timer reaches 0)
+                room.timer_ended = True
+                
+                # Notify all clients that round ended
+                await manager.broadcast(room_code, {
+                    "type": "timer_ended"
+                })
             
             elif message_type == "word_skip":
                 # Deduct 1 point for skip (minimum 0)
@@ -523,12 +536,14 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                                     del active_timers[room_code]
                                 
                                 print(f"[round_end] WINNER: {winner.name}")
+                                print(f"[round_end] Broadcasting game_end to {room_code}...")
                                 await manager.broadcast(room_code, {
                                     "type": "game_end",
                                     "winner": winner.name,
                                     "reason": "score_reached_cycle_end",
                                     "scores": {t.name: t.score for t in room.teams}
                                 })
+                                print(f"[round_end] game_end broadcast complete!")
                                 # Don't send round_cleared, game is over
                                 continue
                             else:

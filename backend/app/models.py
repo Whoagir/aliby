@@ -55,6 +55,8 @@ class GameSettings(BaseModel):
     score_to_win: int = 30  # Points needed to win (30, 50, 100)
     team_count: int = 2  # Number of teams (2, 3, 4)
     show_translations: bool = True  # Show Russian translations during game
+    solo_device: bool = False  # True if playing on single device (all teams on one screen)
+    room_password: str = ""  # Optional password for room (empty = no password)
 
 
 # Team
