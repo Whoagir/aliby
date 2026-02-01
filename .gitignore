@@ -43,16 +43,16 @@ secrets/
 # Local data
 *.db
 *.sqlite
-data/
+# data/ - DON'T exclude, we need backend/app/data with word lists!
 
 # Temporary files
 *.tmp
 temp/
 tmp/
 
-# Excel (don't commit source data)
-*.xlsx
-*.xls
+# Excel source files - exclude large source files
+BNC_COCA_lists.xlsx
+# Other xlsx/xls can be committed if needed
 
 # Scripts used for generation (optional - you can commit these)
 backend/parse_words.py

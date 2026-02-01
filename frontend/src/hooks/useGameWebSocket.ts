@@ -152,8 +152,6 @@ const useGameWebSocket = (roomCode: string) => {
           // Handle round end
           break;
         case 'game_end':
-          console.log('[GAME_END] Received game_end message:', message);
-          
           // Show winner screen with scores
           setGameWinner({
             winner: message.winner,
@@ -163,20 +161,10 @@ const useGameWebSocket = (roomCode: string) => {
           // Save game history if user is authenticated
           const saveGameHistory = async () => {
             const token = localStorage.getItem('auth_token');
-            const currentGameState = gameStateRef.current; // Use ref!
+            const currentGameState = gameStateRef.current;
             const allGuessedWords = guessedWordsRef.current;
             
-            console.log('[SAVE_HISTORY] Token:', token ? 'exists' : 'missing');
-            console.log('[SAVE_HISTORY] gameState from ref:', currentGameState ? 'exists' : 'null');
-            console.log('[SAVE_HISTORY] guessed words count:', allGuessedWords.length);
-            
-            if (!token) {
-              console.log('[SAVE_HISTORY] Skipping: no auth token');
-              return;
-            }
-            
-            if (!currentGameState) {
-              console.log('[SAVE_HISTORY] Skipping: gameState is null');
+            if (!token || !currentGameState) {
               return;
             }
             
@@ -185,16 +173,7 @@ const useGameWebSocket = (roomCode: string) => {
                 ? 'http://localhost:8050' 
                 : `${window.location.protocol}//${window.location.hostname}${window.location.port ? ':' + window.location.port : ''}`;
               
-              console.log('[SAVE_HISTORY] Sending to:', `${API_URL}/history/save-game`);
-              console.log('[SAVE_HISTORY] Data:', {
-                room_code: roomCode,
-                winner: message.winner,
-                final_scores: message.scores || {},
-                teams: currentGameState.teams || [],
-                guessed_words: allGuessedWords
-              });
-              
-              const response = await fetch(`${API_URL}/history/save-game`, {
+              await fetch(`${API_URL}/history/save-game`, {
                 method: 'POST',
                 headers: {
                   'Authorization': `Bearer ${token}`,
@@ -208,22 +187,11 @@ const useGameWebSocket = (roomCode: string) => {
                   guessed_words: allGuessedWords
                 })
               });
-              
-              console.log('[SAVE_HISTORY] Response status:', response.status);
-              
-              if (!response.ok) {
-                const text = await response.text();
-                console.error('[SAVE_HISTORY] Error response:', text);
-              } else {
-                const result = await response.json();
-                console.log('[SAVE_HISTORY] Success!', result);
-              }
             } catch (err) {
-              console.error('[SAVE_HISTORY] Failed to save game history:', err);
+              console.error('Failed to save game history:', err);
             }
           };
           
-          console.log('[GAME_END] Calling saveGameHistory...');
           saveGameHistory();
           break;
         case 'error':

@@ -28,6 +28,8 @@ RUN echo 'server { \
     listen 80; \
     root /usr/share/nginx/html; \
     index index.html; \
+    port_in_redirect off; \
+    absolute_redirect off; \
     location / { \
         try_files $uri $uri/ /index.html; \
     } \
