@@ -48,29 +48,33 @@ manager = ConnectionManager()
 
 
 async def monitor_round_timer(room_code: str, duration: int):
-    """Monitor round timer and send timeout when duration expires (client handles countdown)"""
+    """Monitor round timer and send updates every second"""
     try:
-        await asyncio.sleep(duration)
+        time_left = duration
         
-        if room_code not in active_rooms:
-            return
+        while time_left > 0:
+            await asyncio.sleep(1)
+            time_left -= 1
             
-        room = active_rooms[room_code]
-        if room.status != GameStatus.PLAYING:
-            return
+            if room_code not in active_rooms:
+                return
+                
+            room = active_rooms[room_code]
+            if room.status != GameStatus.PLAYING:
+                return
+            
+            # Send timer update every second
+            await manager.broadcast(room_code, {
+                "type": "timer_update",
+                "time_left": time_left
+            })
         
-        # Time's up - send round summary with guessed words
+        # Time's up - mark timer as ended (don't send round_summary yet!)
+        room.timer_ended = True
+        
+        # Notify all clients that timer ended (but keep last word visible)
         await manager.broadcast(room_code, {
-            "type": "round_summary",
-            "reason": "timeout",
-            "guessed_words": [
-                {
-                    "word": gw.word,
-                    "taboo_words": gw.taboo_words,
-                    "timestamp": gw.timestamp
-                }
-                for gw in room.current_round_words
-            ]
+            "type": "timer_ended"
         })
     except asyncio.CancelledError:
         # Timer was cancelled (e.g., round ended early or paused)
@@ -234,10 +238,12 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                     )
                     
                     if word:
+                        room.current_word = word  # Save current word with translation
                         await manager.broadcast(room_code, {
                             "type": "new_word",
                             "word": word.word,
-                            "taboo": word.taboo_words
+                            "taboo": word.taboo_words,
+                            "translation": word.translation if room.settings.show_translations else ""
                         })
                     
                     # Start timer if timed mode is enabled
@@ -270,65 +276,106 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 # Save the guessed word before moving to next
                 current_word_text = data.get("word", "")
                 current_word_taboo = data.get("taboo_words", [])
+                used_translation = data.get("used_translation", False)
                 
-                if current_word_text:
-                    room.current_round_words.append(GuessedWord(
-                        word=current_word_text,
-                        taboo_words=current_word_taboo,
-                        timestamp=time.time()
-                    ))
-                
-                # Increment score for the CURRENT team (by index)
-                current_team = room.teams[room.current_team_index]
-                current_team.score += 1
-                
-                # Check if team reached score_to_win
-                if current_team.score >= room.settings.score_to_win:
-                    # Cancel timer
-                    if room_code in active_timers:
-                        active_timers[room_code].cancel()
-                        del active_timers[room_code]
+                # Check if timer ended - last word needs team selection
+                if room.timer_ended:
+                    # Timer ended - save word for team selection (no score yet)
+                    if current_word_text:
+                        room.current_round_words.append(GuessedWord(
+                            word=current_word_text,
+                            taboo_words=current_word_taboo,
+                            timestamp=time.time(),
+                            used_translation=False,  # Last word always 1 point
+                            translation=room.current_word.translation if room.current_word else ""
+                        ))
                     
-                    # Game over!
-                    room.status = GameStatus.FINISHED
+                    room.awaiting_team_selection = True
+                    # Send team selection prompt with all team names
                     await manager.broadcast(room_code, {
-                        "type": "game_end",
-                        "winner": current_team.name,
-                        "reason": "score_reached",
-                        "scores": {t.name: t.score for t in room.teams}
+                        "type": "select_team",
+                        "teams": [{"id": t.id, "name": t.name} for t in room.teams],
+                        "last_word": current_word_text
                     })
-                    continue
-                
-                await manager.broadcast(room_code, get_game_state(room))
-                
-                # Send next word
-                word = word_service.get_random_word(
-                    room.mode,
-                    room.settings.difficulty,
-                    room_code
-                )
-                
-                if word:
-                    await manager.broadcast(room_code, {
-                        "type": "new_word",
-                        "word": word.word,
-                        "taboo": word.taboo_words
-                    })
+                else:
+                    # Normal flow - add word and score
+                    if current_word_text:
+                        room.current_round_words.append(GuessedWord(
+                            word=current_word_text,
+                            taboo_words=current_word_taboo,
+                            timestamp=time.time(),
+                            used_translation=used_translation,
+                            translation=room.current_word.translation if room.current_word else ""
+                        ))
+                    
+                    # Increment score for the CURRENT team (by index)
+                    # 0.5 points if translation was used, 1.0 otherwise
+                    current_team = room.teams[room.current_team_index]
+                    points = 0.5 if used_translation else 1.0
+                    current_team.score += points
+                    
+                    # NOTE: Victory is checked at the end of a full cycle (in round_end handler)
+                    # Not immediately after reaching score_to_win
+                    
+                    await manager.broadcast(room_code, get_game_state(room))
+                    
+                    # Send next word
+                    word = word_service.get_random_word(
+                        room.mode,
+                        room.settings.difficulty,
+                        room_code
+                    )
+                    
+                    if word:
+                        room.current_word = word  # Save current word with translation
+                        await manager.broadcast(room_code, {
+                            "type": "new_word",
+                            "word": word.word,
+                            "taboo": word.taboo_words,
+                            "translation": word.translation if room.settings.show_translations else ""
+                        })
             
             elif message_type == "word_skip":
-                # Send next word
-                word = word_service.get_random_word(
-                    room.mode,
-                    room.settings.difficulty,
-                    room_code
-                )
+                # Deduct 1 point for skip (minimum 0)
+                current_team = room.teams[room.current_team_index]
+                current_team.score = max(0, current_team.score - 1)
                 
-                if word:
+                # Check if timer ended - if so, skip means round ends
+                if room.timer_ended:
+                    # Timer ended and word skipped → go to round summary
                     await manager.broadcast(room_code, {
-                        "type": "new_word",
-                        "word": word.word,
-                        "taboo": word.taboo_words
+                        "type": "round_summary",
+                        "reason": "timeout",
+                        "guessed_words": [
+                            {
+                                "word": gw.word,
+                                "taboo_words": gw.taboo_words,
+                                "timestamp": gw.timestamp,
+                                "translation": gw.translation if room.settings.show_translations else ""
+                            }
+                            for gw in room.current_round_words
+                        ]
                     })
+                    # Send updated game state with new score
+                    await manager.broadcast(room_code, get_game_state(room))
+                else:
+                    # Normal flow - send next word
+                    await manager.broadcast(room_code, get_game_state(room))
+                    
+                    word = word_service.get_random_word(
+                        room.mode,
+                        room.settings.difficulty,
+                        room_code
+                    )
+                    
+                    if word:
+                        room.current_word = word  # Save current word with translation
+                        await manager.broadcast(room_code, {
+                            "type": "new_word",
+                            "word": word.word,
+                            "taboo": word.taboo_words,
+                            "translation": word.translation if room.settings.show_translations else ""
+                        })
             
             elif message_type == "pause_game":
                 # Pause the game
@@ -370,7 +417,8 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                             {
                                 "word": gw.word,
                                 "taboo_words": gw.taboo_words,
-                                "timestamp": gw.timestamp
+                                "timestamp": gw.timestamp,
+                                "translation": gw.translation if room.settings.show_translations else ""
                             }
                             for gw in room.current_round_words
                         ]
@@ -384,6 +432,44 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 room.is_paused = False
                 room.paused_time_left = 0
             
+            elif message_type == "team_selected":
+                # Handle team selection for last word after timer ended
+                print(f"[team_selected] Awaiting selection: {room.awaiting_team_selection}")
+                print(f"[team_selected] Words count: {len(room.current_round_words)}")
+                if room.awaiting_team_selection:
+                    selected_team_id = data.get("team_id")
+                    print(f"[team_selected] Selected team ID: {selected_team_id}")
+                    
+                    # Find the selected team and add 1 point
+                    selected_team = next((t for t in room.teams if t.id == selected_team_id), None)
+                    if selected_team:
+                        print(f"[team_selected] Team found: {selected_team.name}, current score: {selected_team.score}")
+                        selected_team.score += 1.0  # Always 1 point for last word
+                        print(f"[team_selected] New score: {selected_team.score}")
+                        
+                        # Reset flags
+                        room.awaiting_team_selection = False
+                        room.timer_ended = False
+                        
+                        # Send round summary
+                        print(f"[team_selected] Sending round_summary with {len(room.current_round_words)} words")
+                        await manager.broadcast(room_code, {
+                            "type": "round_summary",
+                            "reason": "timeout",
+                            "guessed_words": [
+                                {
+                                    "word": gw.word,
+                                    "taboo_words": gw.taboo_words,
+                                    "timestamp": gw.timestamp,
+                                    "translation": gw.translation if room.settings.show_translations else ""
+                                }
+                                for gw in room.current_round_words
+                            ]
+                        })
+                        
+                        # Broadcast updated game state
+                        await manager.broadcast(room_code, get_game_state(room))
+            
             elif message_type == "round_end":
                 print(f"[round_end] Current team index: {room.current_team_index}")
                 
@@ -396,6 +482,8 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 room.current_round_words = []
                 room.is_paused = False
                 room.paused_time_left = 0
+                room.timer_ended = False
+                room.awaiting_team_selection = False
                 
                 # Reset all players' explaining status
                 for team in room.teams:
@@ -411,8 +499,43 @@ async def websocket_endpoint(websocket: WebSocket, room_code: str):
                 # Increment round counter every full cycle of teams
                 if room.current_team_index == 0:
                     room.current_round += 1
+                    print(f"[round_end] Cycle completed! Round: {room.current_round}")
+                    
+                    # Check for winner ONLY at the end of a full cycle
+                    if room.teams:
+                        max_score = max(t.score for t in room.teams)
+                        print(f"[round_end] Max score: {max_score}, Score to win: {room.settings.score_to_win}")
+                        
+                        # Check if anyone reached score_to_win
+                        if max_score >= room.settings.score_to_win:
+                            # Count how many teams have the max score
+                            teams_with_max = [t for t in room.teams if t.score == max_score]
+                            print(f"[round_end] Teams with max score: {[t.name for t in teams_with_max]}")
+                            
+                            # Winner only if there's exactly ONE team with max score
+                            if len(teams_with_max) == 1:
+                                winner = teams_with_max[0]
+                                room.status = GameStatus.FINISHED
+                                
+                                # Cancel timer if any
+                                if room_code in active_timers:
+                                    active_timers[room_code].cancel()
+                                    del active_timers[room_code]
+                                
+                                print(f"[round_end] WINNER: {winner.name}")
+                                await manager.broadcast(room_code, {
+                                    "type": "game_end",
+                                    "winner": winner.name,
+                                    "reason": "score_reached_cycle_end",
+                                    "scores": {t.name: t.score for t in room.teams}
+                                })
+                                # Don't send round_cleared, game is over
+                                continue
+                            else:
+                                print(f"[round_end] TIE-BREAK! Multiple teams with {max_score} points, continuing...")
                 
-                if room.current_round > room.settings.rounds_total:
+                # Check if we exceeded rounds_total (fallback for timed mode)
+                if room.current_round > room.settings.rounds_total and room.settings.rounds_total > 0:
                     room.status = GameStatus.FINISHED
                     winner = max(room.teams, key=lambda t: t.score) if room.teams else None
                     

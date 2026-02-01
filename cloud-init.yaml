@@ -71,7 +71,7 @@ write_files:
     content: |
       
       ================================================
-      🎮 Alias/Taboo Game Server
+      Alias/Taboo Game Server
       ================================================
       
       Quick commands:
@@ -145,7 +145,7 @@ write_files:
 
 final_message: |
   ================================================
-  🎉 Alias/Taboo Server Setup Complete!
+  Alias/Taboo Server Setup Complete!
   ================================================
   
   Next steps:

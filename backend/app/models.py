@@ -54,6 +54,7 @@ class GameSettings(BaseModel):
     word_pack: str = "general"
     score_to_win: int = 30  # Points needed to win (30, 50, 100)
     team_count: int = 2  # Number of teams (2, 3, 4)
+    show_translations: bool = True  # Show Russian translations during game
 
 
 # Team
@@ -67,6 +68,8 @@ class GuessedWord(BaseModel):
     word: str
     taboo_words: List[str] = []
     timestamp: float  # Unix timestamp when guessed
+    used_translation: bool = False  # True if translation was shown
+    translation: str = ""  # Russian translation (for round summary)
 
 
 class Team(BaseModel):
@@ -91,6 +94,9 @@ class GameRoom(BaseModel):
     current_round_words: List[GuessedWord] = []  # Words guessed in current round
     is_paused: bool = False  # Pause state
     paused_time_left: int = 0  # Time remaining when paused
+    current_word: Optional["Word"] = None  # Current word being played
+    timer_ended: bool = False  # True when timer reaches 0
+    awaiting_team_selection: bool = False  # True when waiting for team selection for last word
 
 
 # Word
@@ -101,6 +107,7 @@ class Word(BaseModel):
     difficulty: float = 0.5  # 0.0 - 1.0 (legacy field)
     category: str = "general"
     popularity_score: float = 0.0
+    translation: str = ""  # Russian translation (empty if not available)
 
 
 # WebSocket Messages

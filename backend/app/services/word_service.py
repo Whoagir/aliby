@@ -64,7 +64,8 @@ class WordService:
             word=word_data["word"],
             taboo_words=word_data.get("taboo_words", []),
             difficulty=0.5,  # Legacy field, not used
-            category="general"
+            category="general",
+            translation=word_data.get("translation", "")
         )
     
     def clear_room_words(self, room_code: str):

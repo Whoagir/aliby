@@ -63,7 +63,8 @@ async def create_room(
     difficulty: Difficulty = Difficulty.MEDIUM,
     language: str = "en",
     score_to_win: int = 30,
-    team_count: int = 2
+    team_count: int = 2,
+    show_translations: bool = True
 ):
     """Create new game room with custom settings"""
     room_code = generate_room_code()
@@ -80,7 +81,8 @@ async def create_room(
         language=language,
         word_pack="general",
         score_to_win=score_to_win,
-        team_count=team_count
+        team_count=team_count,
+        show_translations=show_translations
     )
     
     # Generate teams dynamically based on team_count

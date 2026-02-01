@@ -1,5 +1,8 @@
 version: '3.8'
 
+# Project name for Docker isolation (prevents conflicts with other projects)
+name: aliby-game
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -8,7 +11,7 @@ services:
       POSTGRES_PASSWORD: aliby_password
       POSTGRES_DB: aliby_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - aliby_postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     healthcheck:
@@ -58,4 +61,4 @@ services:
       - frontend
 
 volumes:
-  postgres_data:
+  aliby_postgres_data:

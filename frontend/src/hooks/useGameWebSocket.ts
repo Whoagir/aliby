@@ -44,18 +44,22 @@ interface GuessedWord {
   word: string;
   taboo_words: string[];
   timestamp: number;
+  translation?: string;
 }
 
 const useGameWebSocket = (roomCode: string) => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [currentWord, setCurrentWord] = useState<string>('');
   const [currentTabooWords, setCurrentTabooWords] = useState<string[]>([]);
+  const [currentTranslation, setCurrentTranslation] = useState<string>('');
   const [timeLeft, setTimeLeft] = useState<number>(0);
   const [isConnected, setIsConnected] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [roundSummary, setRoundSummary] = useState<GuessedWord[] | null>(null);
+  const [timerEnded, setTimerEnded] = useState(false);
+  const [teamSelection, setTeamSelection] = useState<{ teams: { id: number; name: string }[]; last_word: string } | null>(null);
+  const [gameWinner, setGameWinner] = useState<{ winner: string; scores: Record<string, number> } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!roomCode) return;
@@ -79,43 +83,29 @@ const useGameWebSocket = (roomCode: string) => {
         case 'new_word':
           setCurrentWord(message.word);
           setCurrentTabooWords(message.taboo || []);
+          setCurrentTranslation(message.translation || '');
           break;
         case 'timer_start':
-          // Start client-side countdown timer
-          if (timerIntervalRef.current) {
-            clearInterval(timerIntervalRef.current);
-          }
-          
+          // Backend will send timer_update messages every second
           if (message.duration === -1) {
             // Unlimited time
             setTimeLeft(-1);
           } else {
-            // Timed mode - countdown on client
-            const endTime = Date.now() + message.duration * 1000;
+            // Set initial time
             setTimeLeft(message.duration);
-            
-            timerIntervalRef.current = setInterval(() => {
-              const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-              setTimeLeft(remaining);
-              
-              if (remaining === 0 && timerIntervalRef.current) {
-                clearInterval(timerIntervalRef.current);
-                timerIntervalRef.current = null;
-              }
-            }, 100); // Update every 100ms for smooth countdown
           }
+          break;
+        case 'timer_update':
+          // Receive timer updates from backend
+          setTimeLeft(message.time_left);
           break;
         case 'round_summary':
           // Show round summary modal
           setRoundSummary(message.guessed_words || []);
+          setTeamSelection(null); // Close team selection if open
           break;
         case 'game_paused':
           setIsPaused(true);
-          // Stop timer on pause
-          if (timerIntervalRef.current) {
-            clearInterval(timerIntervalRef.current);
-            timerIntervalRef.current = null;
-          }
           break;
         case 'game_resumed':
           setIsPaused(false);
@@ -128,14 +118,33 @@ const useGameWebSocket = (roomCode: string) => {
           // Clear current word AND round summary for next team
           setCurrentWord('');
           setCurrentTabooWords([]);
+          setCurrentTranslation('');
           setTimeLeft(0);
           setRoundSummary(null); // ВАЖНО: очистить модальное окно для всех!
+          setTimerEnded(false);
+          setTeamSelection(null);
+          break;
+        case 'timer_ended':
+          // Timer reached 0 - mark it but keep word visible
+          setTimerEnded(true);
+          setTimeLeft(0);
+          break;
+        case 'select_team':
+          // Show team selection modal for last word
+          setTeamSelection({
+            teams: message.teams || [],
+            last_word: message.last_word || ''
+          });
           break;
         case 'round_end':
           // Handle round end
           break;
         case 'game_end':
-          alert(`Game Over! Winner: ${message.winner}`);
+          // Show winner screen with scores
+          setGameWinner({
+            winner: message.winner,
+            scores: message.scores || {}
+          });
           break;
         case 'error':
           console.error('Game error:', message.message);
@@ -156,11 +165,6 @@ const useGameWebSocket = (roomCode: string) => {
 
     return () => {
       ws.close();
-      // Clean up timer
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-        timerIntervalRef.current = null;
-      }
     };
   }, [roomCode]);
 
@@ -174,11 +178,15 @@ const useGameWebSocket = (roomCode: string) => {
     gameState,
     currentWord,
     currentTabooWords,
+    currentTranslation,
     timeLeft,
     isConnected,
     isPaused,
     roundSummary,
     setRoundSummary,
+    timerEnded,
+    teamSelection,
+    gameWinner,
     sendMessage,
   };
 };

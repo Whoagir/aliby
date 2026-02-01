@@ -1,38 +1,60 @@
-import React from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useEffect, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import useGameWebSocket from '../hooks/useGameWebSocket';
+import { soundPlayer } from '../utils/sounds';
+import Confetti from 'react-confetti';
 
 const GamePage: React.FC = () => {
   const { code } = useParams<{ code: string }>();
+  const navigate = useNavigate();
   const { 
     gameState, 
     currentWord, 
     currentTabooWords,
+    currentTranslation,
     timeLeft, 
     isPaused,
     roundSummary,
     setRoundSummary,
+    timerEnded,
+    teamSelection,
+    gameWinner,
     sendMessage 
   } = useGameWebSocket(code || '');
 
+  const [showTranslation, setShowTranslation] = React.useState(false);
+  const [translationWasUsed, setTranslationWasUsed] = React.useState(false);
+
   const handleGuessed = () => {
-    if (timeLeft > 0 || timeLeft === -1) {
+    if (timeLeft > 0 || timeLeft === -1 || timerEnded) {
+      soundPlayer.playGuessed();
       sendMessage({ 
         type: 'word_guessed',
         word: currentWord,
-        taboo_words: currentTabooWords
+        taboo_words: currentTabooWords,
+        used_translation: translationWasUsed // Use flag, not current visibility
       });
+      setShowTranslation(false); // Reset for next word
+      setTranslationWasUsed(false); // Reset usage flag
     }
   };
 
   const handleSkip = () => {
-    if (timeLeft > 0 || timeLeft === -1) {
+    if (timeLeft > 0 || timeLeft === -1 || timerEnded) {
+      soundPlayer.playSkip();
       sendMessage({ type: 'word_skip' });
+      setShowTranslation(false); // Reset for next word
+      setTranslationWasUsed(false); // Reset usage flag
     }
+  };
+
+  const handleTeamSelected = (teamId: number) => {
+    sendMessage({ type: 'team_selected', team_id: teamId });
   };
 
   const handleTaboo = () => {
     if (timeLeft > 0 || timeLeft === -1) {
+      soundPlayer.playSkip(); // Taboo uses skip sound (negative)
       sendMessage({ type: 'word_taboo' });
     }
   };
@@ -51,6 +73,7 @@ const GamePage: React.FC = () => {
   };
 
   const handleStartRound = () => {
+    soundPlayer.playStartRound();
     const userId = localStorage.getItem('user_id') || '';
     sendMessage({ type: 'start_round', user_id: userId });
   };
@@ -58,7 +81,7 @@ const GamePage: React.FC = () => {
   const userId = localStorage.getItem('user_id') || '';
   const teams = gameState?.teams || [];
   const mode = gameState?.mode || 'alias';
-  const isTimeUp = timeLeft === 0 && currentWord; // Time up only if round was started
+  const isTimeUp = timerEnded; // Use backend flag for accurate timer end
   const isUnlimitedTime = timeLeft === -1;
   const isRoundStarted = !!currentWord; // Round started if we have a word
   const needsStartButton = !currentWord && gameState?.status === 'playing'; // Show START ROUND button
@@ -67,6 +90,36 @@ const GamePage: React.FC = () => {
   const currentTeam = teams[gameState?.current_team_index || 0];
   const isMyTeamPlaying = currentTeam?.players?.some(p => p.user_id === userId) || false;
 
+  // Reset translation visibility when new word arrives
+  useEffect(() => {
+    setShowTranslation(false);
+  }, [currentWord]);
+
+  // Track previous timeLeft for tick sounds
+  const prevTimeLeftRef = useRef<number>(timeLeft);
+
+  // Play sound effects based on timer
+  useEffect(() => {
+    const prevTime = prevTimeLeftRef.current;
+    prevTimeLeftRef.current = timeLeft;
+
+    // Skip if paused or unlimited time
+    if (isPaused || timeLeft === -1) return;
+
+    // Round ended (time reached 0)
+    if (prevTime > 0 && timeLeft === 0) {
+      soundPlayer.playRoundEnd();
+    }
+    // Last 5 seconds - play tick sound
+    else if (timeLeft > 0 && timeLeft <= 5 && prevTime !== timeLeft) {
+      if (timeLeft === 1) {
+        soundPlayer.playFinalTick(); // Higher pitch for last second
+      } else {
+        soundPlayer.playTick();
+      }
+    }
+  }, [timeLeft, isPaused]);
+
   return (
     <div className="min-h-screen p-8">
       <div className="max-w-6xl mx-auto">
@@ -74,9 +127,11 @@ const GamePage: React.FC = () => {
         <div className="text-center mb-6">
           <h1 className="text-3xl font-bold text-white mb-2">Room: {code}</h1>
           <div className="flex justify-center items-center gap-8">
-            <div className="text-white">
-              Round: {gameState?.current_round || 0}
-            </div>
+            {gameState?.status === 'playing' && (
+              <div className="text-white text-lg font-semibold">
+                Round {gameState?.current_round || 1}
+              </div>
+            )}
             <div className={`text-4xl font-bold ${
               isTimeUp ? 'text-red-500' : isUnlimitedTime ? 'text-green-400' : 'text-yellow-400'
             }`}>
@@ -141,11 +196,37 @@ const GamePage: React.FC = () => {
               <>
                 {isMyTeamPlaying ? (
                   <>
-                    <div className={`text-6xl font-bold mb-8 ${
-                      isPaused ? 'text-orange-500' : 'text-gray-800'
+                    <div className={`text-6xl font-bold mb-4 ${
+                      isPaused ? 'text-orange-500' : showTranslation ? 'text-blue-600' : 'text-gray-800'
                     }`}>
                       {isPaused ? 'PAUSED' : currentWord}
                     </div>
+
+                    {/* Translation section */}
+                    {!isPaused && gameState?.settings?.show_translations && currentTranslation && currentTranslation !== "" && (
+                      <div className="mb-6">
+                        {showTranslation && (
+                          <div className="text-4xl text-blue-600 font-semibold mb-4">
+                            {currentTranslation}
+                          </div>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (!translationWasUsed) {
+                              setTranslationWasUsed(true); // Mark as used on first show
+                            }
+                            setShowTranslation(!showTranslation); // Toggle visibility
+                          }}
+                          className={`${
+                            showTranslation 
+                              ? 'bg-gray-500 hover:bg-gray-600' 
+                              : 'bg-blue-500 hover:bg-blue-600'
+                          } text-white font-semibold py-3 px-8 rounded-lg transition duration-200`}
+                        >
+                          {showTranslation ? 'Hide Translation' : `Show Translation ${translationWasUsed ? '' : '(-0.5 points)'}`}
+                        </button>
+                      </div>
+                    )}
 
                     {mode === 'taboo' && currentTabooWords.length > 0 && !isPaused && (
                       <div className="mb-8">
@@ -179,15 +260,15 @@ const GamePage: React.FC = () => {
 
         {/* Action Buttons */}
         <div className="flex justify-center gap-4 flex-wrap">
-          {isRoundStarted && !isTimeUp ? (
+          {isRoundStarted && (timeLeft > 0 || timeLeft === -1 || timerEnded) ? (
             <>
               {isMyTeamPlaying && (
                 <>
                   <button
                     onClick={handleGuessed}
-                    disabled={isPaused}
+                    disabled={isPaused && !timerEnded}
                     className={`font-bold py-4 px-8 rounded-lg text-xl transition duration-200 ${
-                      isPaused 
+                      isPaused && !timerEnded
                         ? 'bg-gray-400 cursor-not-allowed text-white'
                         : 'bg-green-600 hover:bg-green-700 text-white'
                     }`}
@@ -197,9 +278,9 @@ const GamePage: React.FC = () => {
                   
                   <button
                     onClick={handleSkip}
-                    disabled={isPaused}
+                    disabled={isPaused && !timerEnded}
                     className={`font-bold py-4 px-8 rounded-lg text-xl transition duration-200 ${
-                      isPaused 
+                      isPaused && !timerEnded
                         ? 'bg-gray-400 cursor-not-allowed text-white'
                         : 'bg-yellow-600 hover:bg-yellow-700 text-white'
                     }`}
@@ -223,26 +304,49 @@ const GamePage: React.FC = () => {
                 </>
               )}
 
-              <button
-                onClick={handlePauseToggle}
-                className={`font-bold py-4 px-8 rounded-lg text-xl transition duration-200 ${
-                  isPaused
-                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                    : 'bg-orange-600 hover:bg-orange-700 text-white'
-                }`}
-              >
-                {isPaused ? 'Resume' : 'Pause'}
-              </button>
+              {!timerEnded && (
+                <button
+                  onClick={handlePauseToggle}
+                  className={`font-bold py-4 px-8 rounded-lg text-xl transition duration-200 ${
+                    isPaused
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                      : 'bg-orange-600 hover:bg-orange-700 text-white'
+                  }`}
+                >
+                  {isPaused ? 'Resume' : 'Pause'}
+                </button>
+              )}
             </>
-          ) : isTimeUp ? (
-            <button
-              onClick={() => setRoundSummary(roundSummary || [])}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-6 px-12 rounded-lg text-2xl transition duration-200"
-            >
-              Review Round
-            </button>
           ) : null}
         </div>
+
+        {/* Team Selection Modal - for last word after timer ended */}
+        {teamSelection && isMyTeamPlaying && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-2xl max-w-md w-full">
+              <div className="p-6 border-b">
+                <h2 className="text-3xl font-bold text-gray-800">Who guessed it?</h2>
+                <p className="text-gray-600 mt-2">
+                  Last word: <span className="font-bold text-blue-600">{teamSelection.last_word}</span>
+                </p>
+              </div>
+
+              <div className="p-6">
+                <div className="space-y-3">
+                  {teamSelection.teams.map((team) => (
+                    <button
+                      key={team.id}
+                      onClick={() => handleTeamSelected(team.id)}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-6 rounded-lg text-xl transition duration-200"
+                    >
+                      {team.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Round Summary Modal - ТОЛЬКО для играющей команды */}
         {roundSummary !== null && isMyTeamPlaying && (
@@ -266,7 +370,12 @@ const GamePage: React.FC = () => {
                         className="flex items-center justify-between bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition"
                       >
                         <div className="flex-1">
-                          <div className="text-xl font-bold text-gray-800">{gw.word}</div>
+                          <div className="flex items-baseline gap-2">
+                            <div className="text-xl font-bold text-gray-800">{gw.word}</div>
+                            {gameState?.settings?.show_translations && gw.translation && (
+                              <div className="text-lg text-blue-600">({gw.translation})</div>
+                            )}
+                          </div>
                           {gw.taboo_words && gw.taboo_words.length > 0 && (
                             <div className="text-sm text-gray-600 mt-1">
                               Taboo: {gw.taboo_words.join(', ')}
@@ -301,6 +410,51 @@ const GamePage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Winner Screen - Full Page Overlay */}
+        {gameWinner && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-80">
+            <Confetti
+              width={window.innerWidth}
+              height={window.innerHeight}
+              numberOfPieces={500}
+              recycle={true}
+            />
+            <div className="text-center z-10 animate-bounce-in">
+              <h1 className="text-8xl font-bold text-yellow-400 mb-8 animate-pulse">
+                🎉 {gameWinner.winner} WINS! 🎉
+              </h1>
+              <div className="bg-white bg-opacity-20 backdrop-blur-md rounded-3xl p-8 mb-8">
+                <h2 className="text-3xl font-bold text-white mb-4">Final Scores</h2>
+                <div className="space-y-2">
+                  {Object.entries(gameWinner.scores).map(([team, score]) => (
+                    <div key={team} className={`text-2xl font-semibold ${team === gameWinner.winner ? 'text-yellow-300' : 'text-white'}`}>
+                      {team}: {score} points
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => navigate('/')}
+                className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-4 px-12 rounded-full text-2xl transition duration-300 transform hover:scale-110 shadow-2xl"
+              >
+                Back to Lobby
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Exit to Lobby Button - Always visible */}
+        <button
+          onClick={() => {
+            if (window.confirm('Exit to lobby? (Game will pause if you are playing)')) {
+              navigate('/');
+            }
+          }}
+          className="fixed top-4 right-4 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200"
+        >
+          Exit to Lobby
+        </button>
       </div>
     </div>
   );

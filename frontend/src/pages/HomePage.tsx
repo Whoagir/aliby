@@ -25,6 +25,7 @@ const HomePage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [selectedMode, setSelectedMode] = useState<'alias' | 'taboo'>('alias');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   
   // Game settings
   const [timedMode, setTimedMode] = useState(true);
@@ -33,6 +34,13 @@ const HomePage: React.FC = () => {
   const [language, setLanguage] = useState('en');
   const [scoreToWin, setScoreToWin] = useState(30);
   const [teamCount, setTeamCount] = useState(2);
+  const [showTranslations, setShowTranslations] = useState(true);
+  
+  // Advanced settings
+  const [customRoundTime, setCustomRoundTime] = useState(60);
+  const [customScoreToWin, setCustomScoreToWin] = useState(30);
+  const [enableMaxTranslations, setEnableMaxTranslations] = useState(false);
+  const [maxTranslations, setMaxTranslations] = useState(10);
   
   const navigate = useNavigate();
 
@@ -58,12 +66,13 @@ const HomePage: React.FC = () => {
       const params = new URLSearchParams({
         mode: selectedMode,
         timed_mode: timedMode.toString(),
-        round_time: roundTime.toString(),
+        round_time: (showAdvanced ? customRoundTime : roundTime).toString(),
         difficulty: difficulty,
         language: language,
-        score_to_win: scoreToWin.toString(),
+        score_to_win: (showAdvanced ? customScoreToWin : scoreToWin).toString(),
         team_count: teamCount.toString(),
-        host_id: userId
+        host_id: userId,
+        show_translations: showTranslations.toString()
       });
       
       const fullUrl = `${API_URL}/rooms/create?${params}`;
@@ -195,6 +204,104 @@ const HomePage: React.FC = () => {
               </div>
 
               <div className="space-y-4">
+                {/* Basic / Advanced Toggle */}
+                <div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowAdvanced(false)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
+                        !showAdvanced
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Basic
+                    </button>
+                    <button
+                      onClick={() => setShowAdvanced(true)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium transition ${
+                        showAdvanced
+                          ? 'bg-red-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Advanced
+                    </button>
+                  </div>
+                </div>
+
+                {showAdvanced ? (
+                  <>
+                    {/* Advanced: Custom Round Time */}
+                    {timedMode && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          Custom Round Time (seconds)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="1000"
+                          value={customRoundTime}
+                          onChange={(e) => setCustomRoundTime(Math.max(0, Math.min(1000, parseInt(e.target.value) || 0)))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          {Math.floor(customRoundTime / 60)}:{(customRoundTime % 60).toString().padStart(2, '0')} (0-1000 seconds)
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Advanced: Custom Score to Win */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Custom Score to Win
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={customScoreToWin}
+                        onChange={(e) => setCustomScoreToWin(Math.max(1, Math.min(500, parseInt(e.target.value) || 1)))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">1-500 points</p>
+                    </div>
+
+                    {/* Max Translations Limit */}
+                    <div>
+                      <div className="flex items-center space-x-3 mb-2">
+                        <input
+                          type="checkbox"
+                          id="enableMaxTranslations"
+                          checked={enableMaxTranslations}
+                          onChange={(e) => setEnableMaxTranslations(e.target.checked)}
+                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="enableMaxTranslations" className="text-sm font-medium text-gray-700 cursor-pointer">
+                          Limit Translations Per Round
+                        </label>
+                      </div>
+                      
+                      {enableMaxTranslations && (
+                        <div>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={maxTranslations}
+                            onChange={(e) => setMaxTranslations(Math.max(1, Math.min(50, parseInt(e.target.value) || 10)))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Maximum {maxTranslations} translation{maxTranslations !== 1 ? 's' : ''} per round (1-50)
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
                 {/* Timer Mode */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -355,6 +462,22 @@ const HomePage: React.FC = () => {
                     ))}
                   </div>
                 </div>
+
+                {/* Show Translations Checkbox */}
+                <div className="flex items-center space-x-3 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                  <input
+                    type="checkbox"
+                    id="showTranslations"
+                    checked={showTranslations}
+                    onChange={(e) => setShowTranslations(e.target.checked)}
+                    className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <label htmlFor="showTranslations" className="text-gray-700 font-medium cursor-pointer select-none">
+                    Show Russian translations (для изучающих английский)
+                  </label>
+                </div>
+                </>
+                )}
 
                 {/* Create Button */}
                 <button
